@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#1a1a1a">
+<title>Damas Inglesas - Presencial y Bot</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23b58863'/%3E%3Crect width='50' height='50' fill='%23f0d9b5'/%3E%3Crect x='50' y='50' width='50' height='50' fill='%23f0d9b5'/%3E%3Ccircle cx='50' cy='50' r='34' fill='%23c0392b' stroke='%23ff6b6b' stroke-width='5'/%3E%3Ccircle cx='50' cy='50' r='18' fill='none' stroke='%23ff6b6b' stroke-width='4'/%3E%3C/svg%3E">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23b58863'/%3E%3Ccircle cx='50' cy='50' r='34' fill='%23c0392b' stroke='%23ff6b6b' stroke-width='5'/%3E%3Ccircle cx='50' cy='50' r='18' fill='none' stroke='%23ff6b6b' stroke-width='4'/%3E%3C/svg%3E">
+<style>
+*{-webkit-tap-highlight-color:transparent}
+body{font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;background:#1a1a1a;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;min-height:100dvh;margin:0;padding:8px;box-sizing:border-box;--cell:min(60px,11vw)}
+h1{margin:0 0 6px;color:#e0e0e0;font-size:1.5rem;text-align:center}
+#menu{margin-bottom:10px;display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+#info{font-size:1.05rem;margin-bottom:12px;background:#2d2d2d;padding:8px 16px;border-radius:8px;box-shadow:0 4px 6px rgba(0,0,0,.3);text-align:center}
+#counts{font-size:.8rem;color:#aaa;margin-top:3px}
+#board{display:grid;grid-template-columns:repeat(8,var(--cell));grid-template-rows:repeat(8,var(--cell));border:4px solid #444;border-radius:8px;overflow:hidden;box-shadow:0 10px 20px rgba(0,0,0,.5)}
+.cell{width:var(--cell);height:var(--cell);display:flex;align-items:center;justify-content:center;cursor:pointer;position:relative;user-select:none;touch-action:manipulation}
+.light{background:#f0d9b5}.dark{background:#b58863}
+.cell.selected{background:#7b61ff !important}
+.cell.highlight::after{content:'';width:34%;height:34%;background:rgba(0,0,0,.35);border-radius:50%;position:absolute}
+.cell.highlight.captura::after{background:rgba(231,76,60,.6)}
+.cell.ultimo{box-shadow:inset 0 0 0 3px rgba(255,235,59,.55)}
+.piece{width:73%;height:73%;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:inset 0 2px 4px rgba(255,255,255,.4),0 4px 6px rgba(0,0,0,.3);font-size:calc(var(--cell) * .4)}
+.piece.red{background:radial-gradient(circle at 30% 30%,#ff6b6b,#c0392b)}
+.piece.white{background:radial-gradient(circle at 30% 30%,#ecf0f1,#bdc3c7)}
+.piece.must{outline:3px solid #ffeb3b;animation:pulso 1s infinite}
+@keyframes pulso{50%{outline-color:transparent}}
+#controls{margin-top:14px}
+button{background:#e74c3c;color:#fff;border:none;padding:10px 18px;font-size:.95rem;border-radius:5px;cursor:pointer;transition:background .2s}
+button:hover{background:#c0392b}
+button.active{background:#27ae60}
+</style>
+</head>
+<body>
+<h1>Damas Inglesas (Checkers)</h1>
+<div id="menu">
+  <button id="btn-pvp" class="active" onclick="setGameMode('pvp')">Dos Jugadores (Presencial)</button>
+  <button id="btn-pve" onclick="setGameMode('pve')">Contra el Bot (IA)</button>
+</div>
+<div id="info">
+  <div>Turno de: <span id="turn-indicator" style="color:#ff6b6b;font-weight:bold">Rojas</span></div>
+  <div id="counts"></div>
+</div>
+<div id="board"></div>
+<div id="controls"><button onclick="resetGame()">Reiniciar Partida</button></div>
+
+<script>
+const boardElement = document.getElementById('board');
+const turnIndicator = document.getElementById('turn-indicator');
+const btnPvP = document.getElementById('btn-pvp'), btnPvE = document.getElementById('btn-pve');
+
+// 0 vacío, 1 roja, 2 roja rey, -1 blanca, -2 blanca rey. Rojas abajo (suben), blancas arriba (bajan).
+let board = [], turn = 1, gameMode = 'pvp', selectedCell = null, validMoves = [];
+let chain = null, botTimer = null, over = false, lastMove = null;
+
+function setGameMode(mode) {
+  gameMode = mode;
+  btnPvP.classList.toggle('active', mode === 'pvp');
+  btnPvE.classList.toggle('active', mode === 'pve');
+  resetGame();
+}
+
+function initBoard() {
+  board = Array.from({ length: 8 }, () => Array(8).fill(0));
+  for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++)
+    if ((r + c) % 2 === 1) { if (r < 3) board[r][c] = -1; else if (r > 4) board[r][c] = 1; }
+}
+
+// --- Reglas ---
+const inside = (r, c) => r >= 0 && r < 8 && c >= 0 && c < 8;
+function rowDirs(p) {
+  if (Math.abs(p) === 2) return [-1, 1];
+  return p > 0 ? [-1] : [1];
+}
+function jumpsFrom(r, c) {
+  const p = board[r][c], res = [];
+  if (!p) return res;
+  rowDirs(p).forEach(rd => [-1, 1].forEach(cd => {
+    const mr = r + rd, mc = c + cd, jr = r + 2 * rd, jc = c + 2 * cd;
+    if (inside(jr, jc) && board[mr][mc] && Math.sign(board[mr][mc]) !== Math.sign(p) && board[jr][jc] === 0)
+      res.push({ r: jr, c: jc, captured: { r: mr, c: mc } });
+  }));
+  return res;
+}
+function stepsFrom(r, c) {
+  const p = board[r][c], res = [];
+  if (!p) return res;
+  rowDirs(p).forEach(rd => [-1, 1].forEach(cd => {
+    if (inside(r + rd, c + cd) && board[r + rd][c + cd] === 0) res.push({ r: r + rd, c: c + cd, captured: null });
+  }));
+  return res;
+}
+function anyJump(color) {
+  for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++)
+    if (Math.sign(board[r][c]) === color && jumpsFrom(r, c).length) return true;
+  return false;
+}
+// Captura obligatoria y saltos encadenados
+function movesFor(r, c) {
+  const p = board[r][c];
+  if (!p) return [];
+  const jumps = jumpsFrom(r, c);
+  if (chain) return (chain.r === r && chain.c === c) ? jumps : [];
+  if (jumps.length) return jumps;
+  return anyJump(Math.sign(p)) ? [] : stepsFrom(r, c);
+}
+function hasMoves(color) {
+  for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++)
+    if (Math.sign(board[r][c]) === color && movesFor(r, c).length) return true;
+  return false;
+}
+
+// --- Render ---
+function renderBoard() {
+  boardElement.innerHTML = '';
+  const humano = !(gameMode === 'pve' && turn === -1) && !over;
+  const obligado = humano && !chain && anyJump(turn);
+  for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
+    const cell = document.createElement('div');
+    cell.className = 'cell ' + ((r + c) % 2 === 0 ? 'light' : 'dark');
+    const p = board[r][c];
+    if (p) {
+      const d = document.createElement('div');
+      d.className = 'piece ' + (p > 0 ? 'red' : 'white');
+      if (Math.abs(p) === 2) d.innerText = '👑';
+      if (obligado && Math.sign(p) === turn && jumpsFrom(r, c).length) d.classList.add('must');
+      cell.appendChild(d);
+    }
+    if (selectedCell && selectedCell.r === r && selectedCell.c === c) cell.classList.add('selected');
+    if (lastMove && lastMove.r === r && lastMove.c === c) cell.classList.add('ultimo');
+    const mv = validMoves.find(m => m.r === r && m.c === c);
+    if (mv) cell.classList.add('highlight', ...(mv.captured ? ['captura'] : []));
+    cell.addEventListener('click', () => handleCellClick(r, c));
+    boardElement.appendChild(cell);
+  }
+  let rojas = 0, blancas = 0;
+  board.flat().forEach(p => { if (p > 0) rojas++; else if (p < 0) blancas++; });
+  document.getElementById('counts').innerText = `🔴 Rojas: ${rojas}  ·  ⚪ Blancas: ${blancas}`;
+  turnIndicator.innerText = turn === 1 ? 'Rojas' : (gameMode === 'pve' ? 'Blancas (Bot 🤖)' : 'Blancas');
+  turnIndicator.style.color = turn === 1 ? '#ff6b6b' : '#ecf0f1';
+}
+
+// --- Interacción ---
+function handleCellClick(r, c) {
+  if (over || (gameMode === 'pve' && turn === -1)) return;
+  const p = board[r][c];
+  if (selectedCell) {
+    const mv = validMoves.find(m => m.r === r && m.c === c);
+    if (mv) return doMove(selectedCell, mv);
+  }
+  if (chain) return; // en una cadena de saltos solo puede seguir la misma ficha
+  if (p && Math.sign(p) === turn) {
+    const m = movesFor(r, c);
+    selectedCell = m.length ? { r, c } : null;
+    validMoves = m;
+  } else { selectedCell = null; validMoves = []; }
+  renderBoard();
+}
+
+function doMove(from, mv) {
+  let piece = board[from.r][from.c], crowned = false;
+  board[from.r][from.c] = 0;
+  if (piece === 1 && mv.r === 0) { piece = 2; crowned = true; }
+  if (piece === -1 && mv.r === 7) { piece = -2; crowned = true; }
+  board[mv.r][mv.c] = piece;
+  if (mv.captured) board[mv.captured.r][mv.captured.c] = 0;
+  lastMove = { r: mv.r, c: mv.c };
+  selectedCell = null; validMoves = [];
+
+  // Si capturó y puede seguir capturando (sin coronar), continúa el mismo turno
+  if (mv.captured && !crowned && jumpsFrom(mv.r, mv.c).length) {
+    chain = { r: mv.r, c: mv.c };
+    if (!(gameMode === 'pve' && turn === -1)) { selectedCell = chain; validMoves = jumpsFrom(mv.r, mv.c); }
+    renderBoard();
+    if (gameMode === 'pve' && turn === -1) botTimer = setTimeout(botStep, 500);
+    return;
+  }
+  chain = null;
+  endTurn();
+}
+
+function endTurn() {
+  const anterior = turn;
+  turn = -turn;
+  renderBoard();
+  if (!hasMoves(turn)) {
+    over = true;
+    const quien = anterior === 1 ? 'Rojas' : (gameMode === 'pve' ? 'la computadora (Blancas)' : 'Blancas');
+    setTimeout(() => { alert(`¡Las fichas ${quien} han ganado la partida!`); resetGame(); }, 50);
+    return;
+  }
+  if (gameMode === 'pve' && turn === -1) botTimer = setTimeout(botStep, 500);
+}
+
+// --- Bot ---
+function peligro(r, c, color) { // ¿puede el rival `color` capturar la ficha en (r,c)?
+  for (let i = 0; i < 8; i++) for (let j = 0; j < 8; j++)
+    if (Math.sign(board[i][j]) === color && jumpsFrom(i, j).some(m => m.captured.r === r && m.captured.c === c)) return true;
+  return false;
+}
+function botStep() {
+  if (over || turn !== -1) return;
+  let best = null;
+  for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
+    if (board[r][c] >= 0) continue;
+    movesFor(r, c).forEach(m => {
+      let score = Math.random();
+      if (m.captured) score += 10 + (Math.abs(board[m.captured.r][m.captured.c]) === 2 ? 3 : 0);
+      if (board[r][c] === -1 && m.r === 7) score += 6;
+      if (board[r][c] === -1) score += m.r * 0.2;
+      // simular para ver si queda expuesta
+      const orig = board[r][c], cap = m.captured ? board[m.captured.r][m.captured.c] : 0;
+      board[r][c] = 0; board[m.r][m.c] = orig; if (m.captured) board[m.captured.r][m.captured.c] = 0;
+      if (peligro(m.r, m.c, 1)) score -= 8;
+      board[m.r][m.c] = 0; board[r][c] = orig; if (m.captured) board[m.captured.r][m.captured.c] = cap;
+      if (!best || score > best.score) best = { r, c, m, score };
+    });
+  }
+  if (best) doMove({ r: best.r, c: best.c }, best.m);
+}
+
+function resetGame() {
+  clearTimeout(botTimer);
+  initBoard();
+  turn = 1; selectedCell = null; validMoves = []; chain = null; over = false; lastMove = null;
+  renderBoard();
+}
+
+resetGame();
+</script>
+</body>
+</html>
